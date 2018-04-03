@@ -64,7 +64,7 @@ get_quark_gobject (void)
  *
  * Return value: the accessible's associated GObject
  **/
-static gpointer
+gpointer
 eel_accessibility_get_gobject (AtkObject *object)
 {
     return g_object_get_qdata (G_OBJECT (object), get_quark_gobject ());

@@ -31,21 +31,29 @@
 void nautilus_files_view_handle_netscape_url_drop (NautilusFilesView *view,
                                                    const char        *encoded_url,
                                                    const char        *target_uri,
-                                                   GdkDragAction      action);
+                                                   GdkDragAction      action,
+                                                   int                x,
+                                                   int                y);
 void nautilus_files_view_handle_uri_list_drop     (NautilusFilesView *view,
                                                    const char        *item_uris,
                                                    const char        *target_uri,
-                                                   GdkDragAction      action);
+                                                   GdkDragAction      action,
+                                                   int                x,
+                                                   int                y);
 void nautilus_files_view_handle_text_drop         (NautilusFilesView *view,
                                                    const char        *text,
                                                    const char        *target_uri,
-                                                   GdkDragAction      action);
+                                                   GdkDragAction      action,
+                                                   int                x,
+                                                   int                y);
 void nautilus_files_view_handle_raw_drop          (NautilusFilesView *view,
                                                    const char        *raw_data,
                                                    int                length,
                                                    const char        *target_uri,
                                                    const char        *direct_save_uri,
-                                                   GdkDragAction      action);
+                                                   GdkDragAction      action,
+                                                   int                x,
+                                                   int                y);
 void nautilus_files_view_handle_hover             (NautilusFilesView *view,
                                                    const char        *target_uri);
 

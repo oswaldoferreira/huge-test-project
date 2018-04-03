@@ -541,6 +541,7 @@ ext_create_link_redo_func (NautilusFileUndoInfoExt *self,
                            GtkWindow               *parent_window)
 {
     nautilus_file_operations_link (g_queue_peek_head_link (self->priv->sources),
+                                   NULL,
                                    self->priv->dest_dir,
                                    parent_window,
                                    file_undo_info_transfer_callback,
@@ -552,6 +553,7 @@ ext_duplicate_redo_func (NautilusFileUndoInfoExt *self,
                          GtkWindow               *parent_window)
 {
     nautilus_file_operations_duplicate (g_queue_peek_head_link (self->priv->sources),
+                                        NULL,
                                         parent_window,
                                         file_undo_info_transfer_callback,
                                         self);
@@ -562,6 +564,7 @@ ext_copy_redo_func (NautilusFileUndoInfoExt *self,
                     GtkWindow               *parent_window)
 {
     nautilus_file_operations_copy (g_queue_peek_head_link (self->priv->sources),
+                                   NULL,
                                    self->priv->dest_dir,
                                    parent_window,
                                    file_undo_info_transfer_callback,
@@ -573,6 +576,7 @@ ext_move_restore_redo_func (NautilusFileUndoInfoExt *self,
                             GtkWindow               *parent_window)
 {
     nautilus_file_operations_move (g_queue_peek_head_link (self->priv->sources),
+                                   NULL,
                                    self->priv->dest_dir,
                                    parent_window,
                                    file_undo_info_transfer_callback,
@@ -625,6 +629,7 @@ ext_move_undo_func (NautilusFileUndoInfoExt *self,
                     GtkWindow               *parent_window)
 {
     nautilus_file_operations_move (g_queue_peek_head_link (self->priv->destinations),
+                                   NULL,
                                    self->priv->src_dir,
                                    parent_window,
                                    file_undo_info_transfer_callback,
@@ -817,7 +822,7 @@ create_from_template_redo_func (NautilusFileUndoInfoCreate *self,
     parent = g_file_get_parent (self->priv->target_file);
     parent_uri = g_file_get_uri (parent);
     new_name = g_file_get_parse_name (self->priv->target_file);
-    nautilus_file_operations_new_file_from_template (NULL,
+    nautilus_file_operations_new_file_from_template (NULL, NULL,
                                                      parent_uri, new_name,
                                                      self->priv->template,
                                                      create_callback, self);
@@ -838,7 +843,7 @@ create_folder_redo_func (NautilusFileUndoInfoCreate *self,
     name = g_file_get_basename (self->priv->target_file);
     parent = g_file_get_parent (self->priv->target_file);
     parent_uri = g_file_get_uri (parent);
-    nautilus_file_operations_new_folder (NULL, parent_uri, name,
+    nautilus_file_operations_new_folder (NULL, NULL, parent_uri, name,
                                          create_callback, self);
 
     g_free (name);
@@ -857,7 +862,7 @@ create_empty_redo_func (NautilusFileUndoInfoCreate *self,
     parent = g_file_get_parent (self->priv->target_file);
     parent_uri = g_file_get_uri (parent);
     new_name = g_file_get_parse_name (self->priv->target_file);
-    nautilus_file_operations_new_file (NULL, parent_uri,
+    nautilus_file_operations_new_file (NULL, NULL, parent_uri,
                                        new_name,
                                        self->priv->template,
                                        self->priv->length,
