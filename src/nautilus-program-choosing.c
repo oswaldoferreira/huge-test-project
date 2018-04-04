@@ -26,7 +26,7 @@
 #include "nautilus-global-preferences.h"
 #include "nautilus-icon-info.h"
 #include "nautilus-recent.h"
-#include <eel/eel-gnome-extensions.h>
+#include "nautilus-ui-utilities.h"
 #include <eel/eel-stock-dialogs.h>
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -200,29 +200,32 @@ launch_application_from_command_internal (const gchar *full_command,
                                           GdkScreen   *screen,
                                           gboolean     use_terminal)
 {
-    GAppInfo *app;
-    GdkAppLaunchContext *ctx;
-    GdkDisplay *display;
+    GAppInfoCreateFlags flags;
+    g_autoptr (GError) error = NULL;
+    g_autoptr (GAppInfo) app = NULL;
 
+    flags = G_APP_INFO_CREATE_NONE;
     if (use_terminal)
     {
-        eel_gnome_open_terminal_on_screen (full_command, screen);
+        flags = G_APP_INFO_CREATE_NEEDS_TERMINAL;
     }
-    else
+
+    app = g_app_info_create_from_commandline (full_command, NULL, flags, &error);
+    if (app != NULL && !(use_terminal && screen == NULL))
     {
-        app = g_app_info_create_from_commandline (full_command, NULL, 0, NULL);
+        GdkDisplay *display;
+        g_autoptr (GdkAppLaunchContext) context = NULL;
 
-        if (app != NULL)
-        {
-            display = gdk_screen_get_display (screen);
-            ctx = gdk_display_get_app_launch_context (display);
-            gdk_app_launch_context_set_screen (ctx, screen);
+        display = gdk_screen_get_display (screen);
+        context = gdk_display_get_app_launch_context (display);
+        gdk_app_launch_context_set_screen (context, screen);
 
-            g_app_info_launch (app, NULL, G_APP_LAUNCH_CONTEXT (ctx), NULL);
+        g_app_info_launch (app, NULL, G_APP_LAUNCH_CONTEXT (context), &error);
+    }
 
-            g_object_unref (app);
-            g_object_unref (ctx);
-        }
+    if (error != NULL)
+    {
+        g_message ("Could not start application: %s", error->message);
     }
 }
 
@@ -333,11 +336,9 @@ nautilus_launch_desktop_file (GdkScreen   *screen,
     {
         g_free (desktop_file_path);
         g_object_unref (desktop_file);
-        eel_show_error_dialog
-            (_("Sorry, but you cannot execute commands from "
-               "a remote site."),
-            _("This is disabled due to security considerations."),
-            parent_window);
+        show_error_dialog(_("Sorry, but you cannot execute commands from a remote site."),
+                          _("This is disabled due to security considerations."),
+                          parent_window);
 
         return;
     }
@@ -347,10 +348,9 @@ nautilus_launch_desktop_file (GdkScreen   *screen,
     g_free (desktop_file_path);
     if (app_info == NULL)
     {
-        eel_show_error_dialog
-            (_("There was an error launching the application."),
-            NULL,
-            parent_window);
+        show_error_dialog(_("There was an error launching the application."),
+                          NULL,
+                          parent_window);
         return;
     }
 
@@ -376,11 +376,10 @@ nautilus_launch_desktop_file (GdkScreen   *screen,
         if (count == 0)
         {
             /* all files are non-local */
-            eel_show_error_dialog
-                (_("This drop target only supports local files."),
-                _("To open non-local files copy them to a local folder and then"
-                  " drop them again."),
-                parent_window);
+            show_error_dialog(_("This drop target only supports local files."),
+                              _("To open non-local files copy them to a local folder and then"
+                              " drop them again."),
+                              parent_window);
 
             g_list_free_full (files, g_object_unref);
             g_object_unref (app_info);
@@ -389,11 +388,10 @@ nautilus_launch_desktop_file (GdkScreen   *screen,
         else if (count != total)
         {
             /* some files are non-local */
-            eel_show_warning_dialog
-                (_("This drop target only supports local files."),
-                _("To open non-local files copy them to a local folder and then"
-                  " drop them again. The local files you dropped have already been opened."),
-                parent_window);
+            eel_show_warning_dialog(_("This drop target only supports local files."),
+                                    _("To open non-local files copy them to a local folder and then"
+                                    " drop them again. The local files you dropped have already been opened."),
+                                    parent_window);
         }
     }
 
@@ -425,10 +423,9 @@ nautilus_launch_desktop_file (GdkScreen   *screen,
     if (error != NULL)
     {
         message = g_strconcat (_("Details: "), error->message, NULL);
-        eel_show_error_dialog
-            (_("There was an error launching the application."),
-            message,
-            parent_window);
+        show_error_dialog(_("There was an error launching the application."),
+                          message,
+                          parent_window);
 
         g_error_free (error);
         g_free (message);
@@ -455,9 +452,9 @@ nautilus_launch_desktop_file (GdkScreen   *screen,
 #include <gdk/gdkwayland.h>
 #endif
 
-typedef void (*GtkWindowHandleExported) (GtkWindow               *window,
-                                         const char              *handle,
-                                         gpointer                 user_data);
+typedef void (*GtkWindowHandleExported) (GtkWindow  *window,
+                                         const char *handle,
+                                         gpointer    user_data);
 
 #ifdef GDK_WINDOWING_WAYLAND
 typedef struct
@@ -486,7 +483,6 @@ window_export_handle (GtkWindow               *window,
                       GtkWindowHandleExported  callback,
                       gpointer                 user_data)
 {
-
 #ifdef GDK_WINDOWING_X11
     if (GDK_IS_X11_DISPLAY (gtk_widget_get_display (GTK_WIDGET (window))))
     {
@@ -531,7 +527,7 @@ window_export_handle (GtkWindow               *window,
     return FALSE;
 }
 
-void
+static void
 gtk_window_unexport_handle (GtkWindow *window)
 {
 #ifdef GDK_WINDOWING_WAYLAND
@@ -623,11 +619,11 @@ launch_default_for_uri_thread_func (GTask        *task,
 }
 
 void
-nautilus_launch_default_for_uri_async  (const char          *uri,
-                                        GtkWindow           *parent_window,
-                                        GCancellable        *cancellable,
-                                        GAsyncReadyCallback  callback,
-                                        gpointer             callback_data)
+nautilus_launch_default_for_uri_async  (const char         *uri,
+                                        GtkWindow          *parent_window,
+                                        GCancellable       *cancellable,
+                                        GAsyncReadyCallback callback,
+                                        gpointer            callback_data)
 {
     g_autoptr (GdkAppLaunchContext) launch_context = NULL;
     g_autoptr (GTask) task = NULL;

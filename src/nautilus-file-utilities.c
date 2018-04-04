@@ -29,6 +29,7 @@
 #include "nautilus-file.h"
 #include "nautilus-file-operations.h"
 #include "nautilus-search-directory.h"
+#include "nautilus-starred-directory.h"
 #include <eel/eel-glib-extensions.h>
 #include <eel/eel-stock-dialogs.h>
 #include <eel/eel-string.h>
@@ -43,7 +44,6 @@
 
 #define NAUTILUS_USER_DIRECTORY_NAME "nautilus"
 #define DEFAULT_NAUTILUS_DIRECTORY_MODE (0755)
-#define DEFAULT_DESKTOP_DIRECTORY_MODE (0755)
 
 /* Allowed characters outside alphanumeric for unreserved. */
 #define G_URI_OTHER_UNRESERVED "-._~"
@@ -322,7 +322,7 @@ nautilus_compute_title_for_location (GFile *location)
         {
             title = g_strdup (_("Other Locations"));
         }
-        else if (nautilus_file_is_favorite_location (file))
+        else if (nautilus_file_is_starred_location (file))
         {
             title = g_strdup (_("Starred"));
         }
@@ -364,7 +364,7 @@ nautilus_get_user_directory (void)
 
     if (!g_file_test (user_directory, G_FILE_TEST_EXISTS))
     {
-        g_mkdir (user_directory, DEFAULT_NAUTILUS_DIRECTORY_MODE);
+        g_mkdir_with_parents (user_directory, DEFAULT_NAUTILUS_DIRECTORY_MODE);
         /* FIXME bugzilla.gnome.org 41286:
          * How should we handle the case where this mkdir fails?
          * Note that nautilus_application_startup will refuse to launch if this
@@ -388,76 +388,6 @@ char *
 nautilus_get_scripts_directory_path (void)
 {
     return g_build_filename (g_get_user_data_dir (), "nautilus", "scripts", NULL);
-}
-
-static const char *
-get_desktop_path (void)
-{
-    const char *desktop_path;
-
-    desktop_path = g_get_user_special_dir (G_USER_DIRECTORY_DESKTOP);
-    if (desktop_path == NULL)
-    {
-        desktop_path = g_get_home_dir ();
-    }
-
-    return desktop_path;
-}
-
-/**
- * nautilus_get_desktop_directory:
- *
- * Get the path for the directory containing files on the desktop.
- *
- * Return value: the directory path.
- **/
-char *
-nautilus_get_desktop_directory (void)
-{
-    const char *desktop_directory;
-
-    desktop_directory = get_desktop_path ();
-
-    /* Don't try to create a home directory */
-    if (!g_file_test (desktop_directory, G_FILE_TEST_EXISTS))
-    {
-        g_mkdir (desktop_directory, DEFAULT_DESKTOP_DIRECTORY_MODE);
-        /* FIXME bugzilla.gnome.org 41286:
-         * How should we handle the case where this mkdir fails?
-         * Note that nautilus_application_startup will refuse to launch if this
-         * directory doesn't get created, so that case is OK. But the directory
-         * could be deleted after Nautilus was launched, and perhaps
-         * there is some bad side-effect of not handling that case.
-         */
-    }
-
-    return g_strdup (desktop_directory);
-}
-
-GFile *
-nautilus_get_desktop_location (void)
-{
-    return g_file_new_for_path (get_desktop_path ());
-}
-
-/**
- * nautilus_get_desktop_directory_uri:
- *
- * Get the uri for the directory containing files on the desktop.
- *
- * Return value: the directory path.
- **/
-char *
-nautilus_get_desktop_directory_uri (void)
-{
-    char *desktop_path;
-    char *desktop_uri;
-
-    desktop_path = nautilus_get_desktop_directory ();
-    desktop_uri = g_filename_to_uri (desktop_path, NULL, NULL);
-    g_free (desktop_path);
-
-    return desktop_uri;
 }
 
 char *
@@ -493,26 +423,6 @@ nautilus_get_templates_directory_uri (void)
     uri = g_filename_to_uri (directory, NULL, NULL);
     g_free (directory);
     return uri;
-}
-
-/* These need to be reset to NULL when desktop_is_home_dir changes */
-static GFile *desktop_dir = NULL;
-static GFile *desktop_dir_dir = NULL;
-static char *desktop_dir_filename = NULL;
-
-static void
-update_desktop_dir (void)
-{
-    const char *path;
-    char *dirname;
-
-    path = get_desktop_path ();
-    desktop_dir = g_file_new_for_path (path);
-
-    dirname = g_path_get_dirname (path);
-    desktop_dir_dir = g_file_new_for_path (dirname);
-    g_free (dirname);
-    desktop_dir_filename = g_path_get_basename (path);
 }
 
 gboolean
@@ -561,31 +471,6 @@ nautilus_is_root_directory (GFile *dir)
     return g_file_equal (dir, root_dir);
 }
 
-
-gboolean
-nautilus_is_desktop_directory_file (GFile      *dir,
-                                    const char *file)
-{
-    if (desktop_dir == NULL)
-    {
-        update_desktop_dir ();
-    }
-
-    return (g_file_equal (dir, desktop_dir_dir) &&
-            strcmp (file, desktop_dir_filename) == 0);
-}
-
-gboolean
-nautilus_is_desktop_directory (GFile *dir)
-{
-    if (desktop_dir == NULL)
-    {
-        update_desktop_dir ();
-    }
-
-    return g_file_equal (dir, desktop_dir);
-}
-
 gboolean
 nautilus_is_search_directory (GFile *dir)
 {
@@ -596,16 +481,37 @@ nautilus_is_search_directory (GFile *dir)
 }
 
 gboolean
-nautilus_is_favorite_directory (GFile *dir)
+nautilus_is_recent_directory (GFile *dir)
 {
     g_autofree gchar *uri = NULL;
 
     uri = g_file_get_uri (dir);
 
-    if (eel_uri_is_favorites (uri))
+    return eel_uri_is_recent (uri);
+}
+
+gboolean
+nautilus_is_starred_directory (GFile *dir)
+{
+    g_autofree gchar *uri = NULL;
+
+    uri = g_file_get_uri (dir);
+
+    if (eel_uri_is_starred (uri))
+    {
         return TRUE;
+    }
 
     return FALSE;
+}
+
+gboolean
+nautilus_is_trash_directory (GFile *dir)
+{
+    g_autofree gchar *uri = NULL;
+
+    uri = g_file_get_uri (dir);
+    return eel_uri_is_trash (uri);
 }
 
 gboolean
@@ -946,7 +852,7 @@ ensure_dirs_task_ready_cb (GObject      *_source,
         locations = locations_from_file_list (files);
 
         nautilus_file_operations_move
-            (locations, NULL,
+            (locations,
             original_dir_location,
             data->parent_window,
             NULL, NULL);
@@ -1303,34 +1209,6 @@ nautilus_file_selection_equal (GList *selection_a,
     return selection_matches;
 }
 
-char *
-nautilus_get_common_filename_prefix (GList *file_list,
-                                     int    min_required_len)
-{
-    GList *l;
-    GList *strs = NULL;
-    char *name;
-    char *result;
-
-    if (file_list == NULL)
-    {
-        return NULL;
-    }
-
-    for (l = file_list; l != NULL; l = l->next)
-    {
-        g_return_val_if_fail (NAUTILUS_IS_FILE (l->data), NULL);
-
-        name = nautilus_file_get_display_name (l->data);
-        strs = g_list_append (strs, name);
-    }
-
-    result = nautilus_get_common_filename_prefix_from_filenames (strs, min_required_len);
-    g_list_free_full (strs, g_free);
-
-    return result;
-}
-
 static char *
 trim_whitespace (const gchar *string)
 {
@@ -1363,6 +1241,74 @@ trim_whitespace (const gchar *string)
     }
 
     return g_utf8_substring (string, 0, length - space_count);
+}
+
+char *
+nautilus_get_common_filename_prefix (GList *file_list,
+                                     int    min_required_len)
+{
+    GList *file_names = NULL;
+    GList *directory_names = NULL;
+    char *result_files;
+    g_autofree char *result = NULL;
+    g_autofree char *result_trimmed = NULL;
+
+    if (file_list == NULL)
+    {
+        return NULL;
+    }
+
+    for (GList *l = file_list; l != NULL; l = l->next)
+    {
+        char *name;
+
+        g_return_val_if_fail (NAUTILUS_IS_FILE (l->data), NULL);
+
+        name = nautilus_file_get_display_name (l->data);
+
+        /* Since the concept of file extensions does not apply to directories,
+         * we filter those out.
+         */
+        if (nautilus_file_is_directory (l->data))
+        {
+            directory_names = g_list_prepend (directory_names, name);
+        }
+        else
+        {
+            file_names = g_list_prepend (file_names, name);
+        }
+    }
+
+    result_files = nautilus_get_common_filename_prefix_from_filenames (file_names, min_required_len);
+
+    if (directory_names == NULL)
+    {
+        return result_files;
+    }
+
+    if (result_files != NULL)
+    {
+        directory_names = g_list_prepend (directory_names, result_files);
+    }
+
+    result = eel_str_get_common_prefix (directory_names, min_required_len);
+
+    g_list_free_full (file_names, g_free);
+    g_list_free_full (directory_names, g_free);
+
+    if (result == NULL)
+    {
+        return NULL;
+    }
+
+    result_trimmed = trim_whitespace (result);
+
+    if (g_utf8_strlen (result_trimmed, -1) < min_required_len)
+    {
+        return NULL;
+    }
+
+    return g_steal_pointer (&result_trimmed);
 }
 
 char *
@@ -1414,7 +1360,12 @@ nautilus_self_check_file_utilities (void)
 void
 nautilus_ensure_extension_builtins (void)
 {
+    /* Please add new extension types here, even if you can guarantee
+     * that they will be registered by the time the extension point
+     * is iterating over its extensions.
+     */
     g_type_ensure (NAUTILUS_TYPE_SEARCH_DIRECTORY);
+    g_type_ensure (NAUTILUS_TYPE_STARRED_DIRECTORY);
 }
 
 void
@@ -1473,4 +1424,3 @@ nautilus_uri_to_native_uri (const gchar *uri)
 
     return NULL;
 }
-

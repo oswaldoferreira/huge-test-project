@@ -47,14 +47,6 @@
 /* Keep async. jobs down to this number for all directories. */
 #define MAX_ASYNC_JOBS 10
 
-struct TopLeftTextReadState
-{
-    NautilusDirectory *directory;
-    NautilusFile *file;
-    gboolean large;
-    GCancellable *cancellable;
-};
-
 struct LinkInfoReadState
 {
     NautilusDirectory *directory;
@@ -67,8 +59,6 @@ struct ThumbnailState
     NautilusDirectory *directory;
     GCancellable *cancellable;
     NautilusFile *file;
-    gboolean trying_original;
-    gboolean tried_original;
 };
 
 struct MountState
@@ -196,8 +186,7 @@ static void     link_info_done (NautilusDirectory *directory,
                                 const char        *uri,
                                 const char        *name,
                                 GIcon             *icon,
-                                gboolean           is_launcher,
-                                gboolean           is_foreign);
+                                gboolean           is_launcher);
 static void     move_file_to_low_priority_queue (NautilusDirectory *directory,
                                                  NautilusFile      *file);
 static void     move_file_to_extension_queue (NautilusDirectory *directory,
@@ -1812,7 +1801,7 @@ lacks_link_info (NautilusFile *file)
         }
         else
         {
-            link_info_done (file->details->directory, file, NULL, NULL, NULL, FALSE, FALSE);
+            link_info_done (file->details->directory, file, NULL, NULL, NULL, FALSE);
             return FALSE;
         }
     }
@@ -2416,8 +2405,7 @@ monitor_includes_file (const Monitor *monitor,
         return FALSE;
     }
     return nautilus_file_should_show (file,
-                                      monitor->monitor_hidden_files,
-                                      TRUE);
+                                      monitor->monitor_hidden_files);
 }
 
 static gboolean
@@ -3559,7 +3547,7 @@ is_link_trusted (NautilusFile *file,
 {
     GFile *location;
     gboolean res;
-    g_autofree gchar* trusted = NULL;
+    g_autofree gchar *trusted = NULL;
 
     if (!is_launcher)
     {
@@ -3592,8 +3580,7 @@ link_info_done (NautilusDirectory *directory,
                 const char        *uri,
                 const char        *name,
                 GIcon             *icon,
-                gboolean           is_launcher,
-                gboolean           is_foreign)
+                gboolean           is_launcher)
 {
     gboolean is_trusted;
 
@@ -3625,7 +3612,6 @@ link_info_done (NautilusDirectory *directory,
         file->details->custom_icon = g_object_ref (icon);
     }
     file->details->is_launcher = is_launcher;
-    file->details->is_foreign_link = is_foreign;
     file->details->is_trusted_link = is_trusted;
 
     nautilus_directory_async_state_changed (directory);
@@ -3667,7 +3653,6 @@ link_info_got_data (NautilusDirectory *directory,
     char *link_uri, *uri, *name;
     GIcon *icon;
     gboolean is_launcher;
-    gboolean is_foreign;
 
     nautilus_directory_ref (directory);
 
@@ -3675,14 +3660,13 @@ link_info_got_data (NautilusDirectory *directory,
     name = NULL;
     icon = NULL;
     is_launcher = FALSE;
-    is_foreign = FALSE;
 
     /* Handle the case where we read the Nautilus link. */
     if (result)
     {
         link_uri = nautilus_file_get_uri (file);
         nautilus_link_get_link_info_given_file_contents (file_contents, bytes_read, link_uri,
-                                                         &uri, &name, &icon, &is_launcher, &is_foreign);
+                                                         &uri, &name, &icon, &is_launcher);
         g_free (link_uri);
     }
     else
@@ -3691,7 +3675,7 @@ link_info_got_data (NautilusDirectory *directory,
     }
 
     nautilus_file_ref (file);
-    link_info_done (directory, file, uri, name, icon, is_launcher, is_foreign);
+    link_info_done (directory, file, uri, name, icon, is_launcher);
     nautilus_file_changed (file);
     nautilus_file_unref (file);
 
@@ -3785,7 +3769,7 @@ link_info_start (NautilusDirectory *directory,
     /* If it's not a link we are done. If it is, we need to read it. */
     if (!nautilus_style_link)
     {
-        link_info_done (directory, file, NULL, NULL, NULL, FALSE, FALSE);
+        link_info_done (directory, file, NULL, NULL, NULL, FALSE);
     }
     else
     {
@@ -3813,14 +3797,12 @@ link_info_start (NautilusDirectory *directory,
 static void
 thumbnail_done (NautilusDirectory *directory,
                 NautilusFile      *file,
-                GdkPixbuf         *pixbuf,
-                gboolean           tried_original)
+                GdkPixbuf         *pixbuf)
 {
     const char *thumb_mtime_str;
     time_t thumb_mtime = 0;
 
     file->details->thumbnail_is_up_to_date = TRUE;
-    file->details->thumbnail_tried_original = tried_original;
     if (file->details->thumbnail)
     {
         g_object_unref (file->details->thumbnail);
@@ -3834,17 +3816,10 @@ thumbnail_done (NautilusDirectory *directory,
 
     if (pixbuf)
     {
-        if (tried_original)
+        thumb_mtime_str = gdk_pixbuf_get_option (pixbuf, "tEXt::Thumb::MTime");
+        if (thumb_mtime_str)
         {
-            thumb_mtime = file->details->mtime;
-        }
-        else
-        {
-            thumb_mtime_str = gdk_pixbuf_get_option (pixbuf, "tEXt::Thumb::MTime");
-            if (thumb_mtime_str)
-            {
-                thumb_mtime = atol (thumb_mtime_str);
-            }
+            thumb_mtime = atol (thumb_mtime_str);
         }
 
         if (thumb_mtime == 0 ||
@@ -3892,13 +3867,12 @@ thumbnail_stop (NautilusDirectory *directory)
 static void
 thumbnail_got_pixbuf (NautilusDirectory *directory,
                       NautilusFile      *file,
-                      GdkPixbuf         *pixbuf,
-                      gboolean           tried_original)
+                      GdkPixbuf         *pixbuf)
 {
     nautilus_directory_ref (directory);
 
     nautilus_file_ref (file);
-    thumbnail_done (directory, file, pixbuf, tried_original);
+    thumbnail_done (directory, file, pixbuf);
     nautilus_file_changed (file);
     nautilus_file_unref (file);
 
@@ -3917,8 +3891,6 @@ thumbnail_state_free (ThumbnailState *state)
     g_free (state);
 }
 
-extern int cached_thumbnail_size;
-
 /* scale very large images down to the max. size we need */
 static void
 thumbnail_loader_size_prepared (GdkPixbufLoader *loader,
@@ -3932,7 +3904,7 @@ thumbnail_loader_size_prepared (GdkPixbufLoader *loader,
     aspect_ratio = ((double) width) / height;
 
     /* cf. nautilus_file_get_icon() */
-    max_thumbnail_size = NAUTILUS_CANVAS_ICON_SIZE_LARGEST * cached_thumbnail_size / NAUTILUS_CANVAS_ICON_SIZE_SMALL;
+    max_thumbnail_size = NAUTILUS_CANVAS_ICON_SIZE_LARGEST * NAUTILUS_CANVAS_ICON_SIZE_STANDARD / NAUTILUS_CANVAS_ICON_SIZE_SMALL;
     if (MAX (width, height) > max_thumbnail_size)
     {
         if (width > height)
@@ -4005,7 +3977,6 @@ thumbnail_read_callback (GObject      *source_object,
     gboolean result;
     NautilusDirectory *directory;
     GdkPixbuf *pixbuf;
-    GFile *location;
 
     state = user_data;
 
@@ -4030,26 +4001,12 @@ thumbnail_read_callback (GObject      *source_object,
         g_free (file_contents);
     }
 
-    if (pixbuf == NULL && state->trying_original)
-    {
-        state->trying_original = FALSE;
+    state->directory->details->thumbnail_state = NULL;
+    async_job_end (state->directory, "thumbnail");
 
-        location = g_file_new_for_path (state->file->details->thumbnail_path);
-        g_file_load_contents_async (location,
-                                    state->cancellable,
-                                    thumbnail_read_callback,
-                                    state);
-        g_object_unref (location);
-    }
-    else
-    {
-        state->directory->details->thumbnail_state = NULL;
-        async_job_end (state->directory, "thumbnail");
+    thumbnail_got_pixbuf (state->directory, state->file, pixbuf);
 
-        thumbnail_got_pixbuf (state->directory, state->file, pixbuf, state->tried_original);
-
-        thumbnail_state_free (state);
-    }
+    thumbnail_state_free (state);
 
     nautilus_directory_unref (directory);
 }
@@ -4086,16 +4043,7 @@ thumbnail_start (NautilusDirectory *directory,
     state->file = file;
     state->cancellable = g_cancellable_new ();
 
-    if (file->details->thumbnail_wants_original)
-    {
-        state->tried_original = TRUE;
-        state->trying_original = TRUE;
-        location = nautilus_file_get_location (file);
-    }
-    else
-    {
-        location = g_file_new_for_path (file->details->thumbnail_path);
-    }
+    location = g_file_new_for_path (file->details->thumbnail_path);
 
     directory->details->thumbnail_state = state;
 

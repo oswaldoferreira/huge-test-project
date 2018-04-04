@@ -1,5 +1,5 @@
 {
-    "app-id": "org.gnome.Nautilus",
+    "app-id": "org.gnome.NautilusDevel",
     "runtime": "org.gnome.Platform",
     "runtime-version": "master",
     "sdk": "org.gnome.Sdk",
@@ -11,12 +11,10 @@
         "--socket=wayland",
         "--talk-name=org.gnome.OnlineAccounts",
         "--talk-name=org.freedesktop.Tracker1",
-        "--filesystem=home",
+        "--filesystem=host",
         "--talk-name=org.gtk.vfs", "--talk-name=org.gtk.vfs.*",
-        "--filesystem=xdg-run/dconf", "--filesystem=~/.config/dconf:ro",
         "--talk-name=ca.desrt.dconf", "--env=DCONF_USER_CONFIG_DIR=.config/dconf"
     ],
-    "cleanup": [ "/include", "/share/bash-completion" ],
     "modules": [
         {
             "name": "exiv2",
@@ -84,9 +82,8 @@
             "builddir": true,
             "name": "nautilus",
             "config-opts": [
-                "-Denable-desktop=false",
-                "-Denable-selinux=false",
-                "--libdir=/app/lib"
+                "--libdir=/app/lib",
+                "-Dprofile=development"
             ],
             "sources": [
                 {

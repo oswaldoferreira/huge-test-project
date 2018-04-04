@@ -19,8 +19,7 @@
    Authors: Jonathan Blandford <jrb@redhat.com>
 */
 
-#ifndef NAUTILUS_LINK_H
-#define NAUTILUS_LINK_H
+#pragma once
 
 #include <gdk/gdk.h>
 
@@ -29,7 +28,6 @@ gboolean         nautilus_link_local_create                      (const char    
 								  const char        *display_name,
 								  const char        *image,
 								  const char        *target_uri,
-								  const GdkPoint    *point,
 								  int                screen,
 								  gboolean           unique_filename);
 gboolean         nautilus_link_local_set_text                    (const char        *uri,
@@ -44,7 +42,4 @@ void             nautilus_link_get_link_info_given_file_contents (const char    
 								  char             **uri,
 								  char             **name,
 								  GIcon            **icon,
-								  gboolean          *is_launcher,
-								  gboolean          *is_foreign);
-
-#endif /* NAUTILUS_LINK_H */
+								  gboolean          *is_launcher);
