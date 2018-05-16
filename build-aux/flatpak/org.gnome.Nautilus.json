@@ -1,14 +1,3 @@
-{
-    "app-id": "org.gnome.NautilusDevel",
-    "runtime": "org.gnome.Platform",
-    "runtime-version": "master",
-    "sdk": "org.gnome.Sdk",
-    "command": "nautilus",
-    "tags": ["devel", "development", "nightly"],
-    "desktop-file-name-prefix": "(Development) ",
-    "finish-args": [
-        "--share=ipc", "--socket=x11",
-        "--socket=wayland",
         "--talk-name=org.gnome.OnlineAccounts",
         "--talk-name=org.freedesktop.Tracker1",
         "--filesystem=host",
