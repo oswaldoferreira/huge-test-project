@@ -1,11 +1,3 @@
-        "--talk-name=org.gnome.OnlineAccounts",
-        "--talk-name=org.freedesktop.Tracker1",
-        "--filesystem=host",
-        "--talk-name=org.gtk.vfs", "--talk-name=org.gtk.vfs.*",
-        "--talk-name=ca.desrt.dconf", "--env=DCONF_USER_CONFIG_DIR=.config/dconf"
-    ],
-    "modules": [
-        {
             "name": "exiv2",
             "sources": [
                 {
