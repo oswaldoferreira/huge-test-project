@@ -7,13 +7,13 @@ stages:
 
 .test_template: &distro_test
   script:
-    - meson _build .
-    - cd _build
-    - ninja test
+    # - meson _build .
+    # - cd _build
+    # - ninja test
 
-flatpak:master:
-    image: registry.gitlab.com/alatiera/gnome-nightly-oci/gnome-master:latest
-    stage: test
+# flatpak:master:
+    # image: registry.gitlab.com/alatiera/gnome-nightly-oci/gnome-master:latest
+    # stage: test
     script:
     - flatpak-builder --stop-at=nautilus app build-aux/flatpak/org.gnome.Nautilus.json
     # Make sure to keep this in sync with the Flatpak manifest, all arguments
