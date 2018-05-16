@@ -1,6 +1,3 @@
-########## EVIL EVIL EVIL
-# See https://github.com/mesonbuild/meson/issues/1487
-# and https://github.com/mesonbuild/meson/pull/3223
 #
 # This is primarily for the “build profiles” feature,
 # to be able to have icons even if we change the application ID.
