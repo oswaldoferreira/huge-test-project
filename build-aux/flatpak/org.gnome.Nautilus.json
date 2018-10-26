@@ -96,4 +96,64 @@
             ]
         }
     ]
+},
+{
+    "app-id": "foo",
+    "runtime": "foo",
+    "runtime-version": "foo",
+    "sdk": "foo",
+    "command": "foo",
+    "tags": ["foo", "bar", "kux"],
+    "desktop-file-name-prefix": "(Foo) ",
+    {
+      "buildsystem": "meson",
+      "builddir": true,
+      "name": "nautilus",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://gitlab.gnome.org/GNOME/nautilus.git"
+        }
+      ]
+    }
+},
+{
+    "app-id": "foo",
+    "runtime": "foo",
+    "runtime-version": "foo",
+    "sdk": "foo",
+    "command": "foo",
+    "tags": ["foo", "bar", "kux"],
+    "desktop-file-name-prefix": "(Foo) ",
+    {
+      "buildsystem": "meson",
+      "builddir": true,
+      "name": "nautilus",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://gitlab.gnome.org/GNOME/nautilus.git"
+        }
+      ]
+    }
+},
+{
+    "app-id": "foo",
+    "runtime": "foo",
+    "runtime-version": "foo",
+    "sdk": "foo",
+    "command": "foo",
+    "tags": ["foo", "bar", "kux"],
+    "desktop-file-name-prefix": "(Foo) ",
+    {
+      "buildsystem": "meson",
+      "builddir": true,
+      "name": "nautilus",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://gitlab.gnome.org/GNOME/nautilus.git"
+        }
+      ]
+    }
 }
