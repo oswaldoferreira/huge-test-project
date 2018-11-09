@@ -61,6 +61,7 @@
         {
             "buildsystem": "meson",
             "builddir": true,
+
             "name": "nautilus",
             "config-opts": [
                 "--libdir=/app/lib",
