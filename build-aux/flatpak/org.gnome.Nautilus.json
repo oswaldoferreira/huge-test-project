@@ -66,6 +66,7 @@
             "name": "autilus",
             "config-opts": [
                 "--libdir=/app/lib",
+                        
                 "-Dprofile=development"
             ],
             "sources": [
