@@ -19,7 +19,7 @@
     "cleanup": [ "/include", "/share/bash-completion" ],
     "modules": [
         {
-            "name": "exiv2",
+            "name": "exiv3",
             "sources": [
                 {
                     "type": "archive",
