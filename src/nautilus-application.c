@@ -31,7 +31,6 @@
 #include "nautilus-dbus-manager.h"
 #include "nautilus-file-undo-manager.h"
 #include "nautilus-freedesktop-dbus.h"
-#include "nautilus-image-properties-page.h"
 #include "nautilus-previewer.h"
 #include "nautilus-progress-persistence-handler.h"
 #include "nautilus-self-check-functions.h"
@@ -50,7 +49,8 @@
 #include "nautilus-profile.h"
 #include "nautilus-signaller.h"
 #include "nautilus-ui-utilities.h"
-#include <libnautilus-extension/nautilus-menu-provider.h>
+
+#include <nautilus-extension.h>
 
 #define DEBUG_FLAG NAUTILUS_DEBUG_APPLICATION
 #include "nautilus-debug.h"
@@ -163,7 +163,7 @@ check_required_directories (NautilusApplication *self)
         GString *directories_as_string;
         GSList *l;
         char *error_string;
-        const char *detail_string;
+        g_autofree char *detail_string = NULL;
         GtkDialog *dialog;
 
         ret = FALSE;
@@ -192,7 +192,7 @@ check_required_directories (NautilusApplication *self)
                                              directories_as_string->str);
         }
 
-        dialog = eel_show_error_dialog (error_string, detail_string, NULL);
+        dialog = show_error_dialog (error_string, detail_string, NULL);
         /* We need the main event loop so the user has a chance to see the dialog. */
         gtk_application_add_window (GTK_APPLICATION (self),
                                     GTK_WINDOW (dialog));
@@ -240,17 +240,16 @@ NautilusWindow *
 nautilus_application_create_window (NautilusApplication *self,
                                     GdkScreen           *screen)
 {
-    NautilusApplicationPrivate *priv;
     NautilusWindow *window;
-    char *geometry_string;
     gboolean maximized;
-    gint n_windows;
+    g_autoptr (GVariant) default_size = NULL;
+    gint default_width = 0;
+    gint default_height = 0;
+    const gchar *application_id;
 
     g_return_val_if_fail (NAUTILUS_IS_APPLICATION (self), NULL);
     nautilus_profile_start (NULL);
 
-    priv = nautilus_application_get_instance_private (self);
-    n_windows = g_list_length (priv->windows);
     window = nautilus_window_new (screen);
 
     maximized = g_settings_get_boolean
@@ -263,24 +262,24 @@ nautilus_application_create_window (NautilusApplication *self,
     {
         gtk_window_unmaximize (GTK_WINDOW (window));
     }
+    default_size = g_settings_get_value (nautilus_window_state,
+                                         NAUTILUS_WINDOW_STATE_INITIAL_SIZE);
 
-    geometry_string = g_settings_get_string
-                          (nautilus_window_state, NAUTILUS_WINDOW_STATE_GEOMETRY);
-    if (geometry_string != NULL &&
-        geometry_string[0] != 0)
+    g_variant_get (default_size, "(ii)", &default_width, &default_height);
+
+    gtk_window_set_default_size (GTK_WINDOW (window),
+                                 MAX (NAUTILUS_WINDOW_MIN_WIDTH, default_width),
+                                 MAX (NAUTILUS_WINDOW_MIN_HEIGHT, default_height));
+
+    application_id = g_application_get_application_id (G_APPLICATION (self));
+    if (g_strcmp0 (application_id, "org.gnome.NautilusDevel") == 0)
     {
-        /* Ignore saved window position if another window is already showing.
-         * That way the two windows wont appear at the exact same
-         * location on the screen.
-         */
-        eel_gtk_window_set_initial_geometry_from_string
-            (GTK_WINDOW (window),
-            geometry_string,
-            NAUTILUS_WINDOW_MIN_WIDTH,
-            NAUTILUS_WINDOW_MIN_HEIGHT,
-            n_windows > 0);
+        GtkStyleContext *style_context;
+
+        style_context = gtk_widget_get_style_context (GTK_WIDGET (window));
+
+        gtk_style_context_add_class (style_context, "devel");
     }
-    g_free (geometry_string);
 
     DEBUG ("Creating a new navigation window");
     nautilus_profile_end (NULL);
@@ -939,35 +938,6 @@ nautilus_init_application_actions (NautilusApplication *app)
     nautilus_application_set_accelerator (G_APPLICATION (app), "app.show-hide-sidebar", "F9");
 }
 
-const GOptionEntry options[] =
-{
-        #ifndef NAUTILUS_OMIT_SELF_CHECK
-    { "check", 'c', 0, G_OPTION_ARG_NONE, NULL,
-      N_("Perform a quick set of self-check tests."), NULL },
-        #endif
-    /* dummy, only for compatibility reasons */
-    { "browser", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, NULL,
-      NULL, NULL },
-    { "no-desktop", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, NULL,
-      NULL, NULL },
-    /* ditto */
-    { "geometry", 'g', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING, NULL,
-      N_("Create the initial window with the given geometry."), N_("GEOMETRY") },
-    { "version", '\0', 0, G_OPTION_ARG_NONE, NULL,
-      N_("Show the version of the program."), NULL },
-    { "new-window", 'w', 0, G_OPTION_ARG_NONE, NULL,
-      N_("Always open a new window for browsing specified URIs"), NULL },
-    { "no-default-window", 'n', 0, G_OPTION_ARG_NONE, NULL,
-      N_("Only create windows for explicitly specified URIs."), NULL },
-    { "quit", 'q', 0, G_OPTION_ARG_NONE, NULL,
-      N_("Quit Nautilus."), NULL },
-    { "select", 's', 0, G_OPTION_ARG_NONE, NULL,
-      N_("Select specified URI in parent folder."), NULL },
-    { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, NULL, NULL, N_("[URI…]") },
-
-    { NULL }
-};
-
 static void
 nautilus_application_activate (GApplication *app)
 {
@@ -1014,7 +984,20 @@ nautilus_application_handle_file_args (NautilusApplication *self,
                 file = g_file_new_for_commandline_arg_and_cwd (remaining[idx], cwd);
                 g_free (cwd);
             }
-            g_ptr_array_add (file_array, file);
+
+            if (nautilus_is_search_directory (file))
+            {
+                g_autofree char *error_string = NULL;
+                error_string = g_strdup_printf (_("“%s” is an internal protocol. "
+                                                  "Opening this location directly is not supported."),
+                                                EEL_SEARCH_URI);
+
+                g_printerr ("%s\n", error_string);
+            }
+            else
+            {
+                g_ptr_array_add (file_array, file);
+            }
         }
     }
     else if (g_variant_dict_contains (options, "new-window"))
@@ -1101,6 +1084,32 @@ out:
 static void
 nautilus_application_init (NautilusApplication *self)
 {
+    static const GOptionEntry options[] =
+    {
+#ifndef NAUTILUS_OMIT_SELF_CHECK
+        { "check", 'c', 0, G_OPTION_ARG_NONE, NULL,
+          N_("Perform a quick set of self-check tests."), NULL },
+#endif
+        /* dummy, only for compatibility reasons */
+        { "browser", '\0', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, NULL,
+          NULL, NULL },
+        /* ditto */
+        { "geometry", 'g', G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_STRING, NULL,
+          N_("Create the initial window with the given geometry."), N_("GEOMETRY") },
+        { "version", '\0', 0, G_OPTION_ARG_NONE, NULL,
+          N_("Show the version of the program."), NULL },
+        { "new-window", 'w', 0, G_OPTION_ARG_NONE, NULL,
+          N_("Always open a new window for browsing specified URIs"), NULL },
+        { "no-default-window", 'n', 0, G_OPTION_ARG_NONE, NULL,
+          N_("Only create windows for explicitly specified URIs."), NULL },
+        { "quit", 'q', 0, G_OPTION_ARG_NONE, NULL,
+          N_("Quit Nautilus."), NULL },
+        { "select", 's', 0, G_OPTION_ARG_NONE, NULL,
+          N_("Select specified URI in parent folder."), NULL },
+        { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, NULL, NULL, N_("[URI…]") },
+
+        { NULL }
+    };
     NautilusApplicationPrivate *priv;
 
     priv = nautilus_application_get_instance_private (self);
@@ -1253,6 +1262,20 @@ on_application_shutdown (GApplication *application,
     nautilus_icon_info_clear_caches ();
 }
 
+static void
+icon_theme_changed_callback (GtkIconTheme *icon_theme,
+                             gpointer      user_data)
+{
+    /* Clear all pixmap caches as the icon => pixmap lookup changed */
+    nautilus_icon_info_clear_caches ();
+
+    /* Tell the world that icons might have changed. We could invent a narrower-scope
+     * signal to mean only "thumbnails might have changed" if this ends up being slow
+     * for some reason.
+     */
+    emit_change_signals_for_all_files_in_all_directories ();
+}
+
 void
 nautilus_application_startup_common (NautilusApplication *self)
 {
@@ -1268,15 +1291,12 @@ nautilus_application_startup_common (NautilusApplication *self)
      */
     G_APPLICATION_CLASS (nautilus_application_parent_class)->startup (G_APPLICATION (self));
 
-    gtk_window_set_default_icon_name ("org.gnome.Nautilus");
+    gtk_window_set_default_icon_name (APPLICATION_ID);
 
     setup_theme_extensions ();
 
     /* initialize preferences and create the global GSettings objects */
     nautilus_global_preferences_init ();
-
-    /* register property pages */
-    nautilus_image_properties_page_register ();
 
     /* initialize nautilus modules */
     nautilus_profile_start ("Modules");
@@ -1299,6 +1319,11 @@ nautilus_application_startup_common (NautilusApplication *self)
     nautilus_profile_end (NULL);
 
     g_signal_connect (self, "shutdown", G_CALLBACK (on_application_shutdown), NULL);
+
+    g_signal_connect_object (gtk_icon_theme_get_default (),
+                             "changed",
+                             G_CALLBACK (icon_theme_changed_callback),
+                             NULL, 0);
 }
 
 static void
@@ -1553,7 +1578,7 @@ NautilusApplication *
 nautilus_application_new (void)
 {
     return g_object_new (NAUTILUS_TYPE_APPLICATION,
-                         "application-id", "org.gnome.Nautilus",
+                         "application-id", APPLICATION_ID,
                          "flags", G_APPLICATION_HANDLES_COMMAND_LINE | G_APPLICATION_HANDLES_OPEN,
                          "inactivity-timeout", 12000,
                          NULL);

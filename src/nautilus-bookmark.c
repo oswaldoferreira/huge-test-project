@@ -32,7 +32,6 @@
 
 #include "nautilus-file.h"
 #include "nautilus-file-utilities.h"
-#include "nautilus-global-preferences.h"
 #include "nautilus-icon-names.h"
 
 #define DEBUG_FLAG NAUTILUS_DEBUG_BOOKMARKS
@@ -213,13 +212,9 @@ nautilus_bookmark_get_is_builtin (NautilusBookmark *bookmark)
     }
 
     /* exclude XDG locations which are not in our builtin list */
-    if (xdg_type == G_USER_DIRECTORY_DESKTOP &&
-        !g_settings_get_boolean (gnome_background_preferences, NAUTILUS_PREFERENCES_SHOW_DESKTOP))
-    {
-        return FALSE;
-    }
-
-    return (xdg_type != G_USER_DIRECTORY_TEMPLATES) && (xdg_type != G_USER_DIRECTORY_PUBLIC_SHARE);
+    return (xdg_type != G_USER_DIRECTORY_DESKTOP) &&
+           (xdg_type != G_USER_DIRECTORY_TEMPLATES) &&
+           (xdg_type != G_USER_DIRECTORY_PUBLIC_SHARE);
 }
 
 gboolean

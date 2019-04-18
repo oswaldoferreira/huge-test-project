@@ -38,9 +38,11 @@
 #include "nautilus-window-slot.h"
 #include "nautilus-list-view.h"
 #include "nautilus-other-locations-window-slot.h"
+#include "nautilus-tag-manager.h"
 
 #include <eel/eel-debug.h>
 #include <eel/eel-gtk-extensions.h>
+#include <eel/eel-vfs-extensions.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <gdk/gdkx.h>
 #include <gdk/gdkkeysyms.h>
@@ -108,6 +110,7 @@ typedef struct
     int side_pane_width;
     GtkWidget *sidebar;            /* container for the GtkPlacesSidebar */
     GtkWidget *places_sidebar;     /* the actual GtkPlacesSidebar */
+    NautilusTagManager *starred_manager; /* For the starred sidbear item */
     GVolume *selected_volume;     /* the selected volume in the sidebar popup callback */
     GFile *selected_file;     /* the selected file in the sidebar popup callback */
 
@@ -115,11 +118,11 @@ typedef struct
     GtkWidget *main_view;
 
     /* Notifications */
-    GtkWidget *notification_delete;
-    GtkWidget *notification_delete_label;
-    GtkWidget *notification_delete_close;
-    GtkWidget *notification_delete_undo;
-    guint notification_delete_timeout_id;
+    GtkWidget *in_app_notification_undo;
+    GtkWidget *in_app_notification_undo_label;
+    GtkWidget *in_app_notification_undo_close_button;
+    GtkWidget *in_app_notification_undo_undo_button;
+    guint in_app_notification_undo_timeout_id;
     GtkWidget *notification_operation;
     GtkWidget *notification_operation_label;
     GtkWidget *notification_operation_close;
@@ -134,8 +137,6 @@ typedef struct
     /* focus widget before the location bar has been shown temporarily */
     GtkWidget *last_focus_widget;
 
-    gboolean disable_chrome;
-
     guint sidebar_width_handler_id;
     guint bookmarks_id;
 
@@ -146,19 +147,12 @@ typedef struct
 
 enum
 {
-    PROP_DISABLE_CHROME = 1,
-    NUM_PROPERTIES,
-};
-
-enum
-{
     SLOT_ADDED,
     SLOT_REMOVED,
     LAST_SIGNAL
 };
 
 static guint signals[LAST_SIGNAL] = { 0 };
-static GParamSpec *properties[NUM_PROPERTIES] = { NULL, };
 
 G_DEFINE_TYPE_WITH_PRIVATE (NautilusWindow, nautilus_window, GTK_TYPE_APPLICATION_WINDOW);
 
@@ -183,7 +177,8 @@ static const struct
     { GDK_KEY_Forward, "forward" },
 };
 
-static const GtkPadActionEntry pad_actions[] = {
+static const GtkPadActionEntry pad_actions[] =
+{
     { GTK_PAD_ACTION_BUTTON, 0, -1, N_("Parent folder"), "up" },
     { GTK_PAD_ACTION_BUTTON, 1, -1, N_("Home"), "go-home" },
     { GTK_PAD_ACTION_BUTTON, 2, -1, N_("New tab"), "new-tab" },
@@ -798,7 +793,7 @@ nautilus_window_new_tab (NautilusWindow *window)
     NautilusWindowSlot *current_slot;
     NautilusWindowOpenFlags flags;
     GFile *location;
-    char *scheme;
+    g_autofree gchar *uri = NULL;
 
     current_slot = nautilus_window_get_active_slot (window);
     location = nautilus_window_slot_get_location (current_slot);
@@ -807,8 +802,8 @@ nautilus_window_new_tab (NautilusWindow *window)
     {
         flags = g_settings_get_enum (nautilus_preferences, NAUTILUS_PREFERENCES_NEW_TAB_POSITION);
 
-        scheme = g_file_get_uri_scheme (location);
-        if (strcmp (scheme, "x-nautilus-search") == 0)
+        uri = g_file_get_uri (location);
+        if (eel_uri_is_search (uri))
         {
             location = g_file_new_for_path (g_get_home_dir ());
         }
@@ -816,8 +811,6 @@ nautilus_window_new_tab (NautilusWindow *window)
         {
             g_object_ref (location);
         }
-
-        g_free (scheme);
 
         flags |= NAUTILUS_WINDOW_OPEN_FLAG_NEW_TAB;
         nautilus_window_open_location_full (window, location, flags, NULL, NULL);
@@ -1136,12 +1129,12 @@ places_sidebar_show_other_locations_with_flags (NautilusWindow     *window,
 }
 
 static void
-places_sidebar_show_starred_location (NautilusWindow    *window,
-                                      GtkPlacesOpenFlags open_flags)
+places_sidebar_show_starred_location (NautilusWindow     *window,
+                                      GtkPlacesOpenFlags  open_flags)
 {
     GFile *location;
 
-    location = g_file_new_for_uri ("favorites:///");
+    location = g_file_new_for_uri ("starred:///");
 
     open_location_cb (window, location, open_flags);
 
@@ -1225,7 +1218,7 @@ places_sidebar_drag_action_requested_cb (GtkPlacesSidebar *sidebar,
     }
     uri = g_file_get_uri (dest_file);
 
-    if (g_list_length (items) < 1)
+    if (items == NULL)
     {
         goto out;
     }
@@ -1286,7 +1279,7 @@ places_sidebar_drag_perform_drop_cb (GtkPlacesSidebar *sidebar,
     dest_uri = g_file_get_uri (dest_file);
     source_uri_list = build_uri_list_from_gfile_list (source_file_list);
 
-    nautilus_file_operations_copy_move (source_uri_list, NULL, dest_uri, action, GTK_WIDGET (sidebar), NULL, NULL);
+    nautilus_file_operations_copy_move (source_uri_list, dest_uri, action, GTK_WIDGET (sidebar), NULL, NULL);
 
     g_free (dest_uri);
     g_list_free_full (source_uri_list, g_free);
@@ -1505,6 +1498,19 @@ places_sidebar_populate_popup_cb (GtkPlacesSidebar *sidebar,
 }
 
 static void
+on_starred_changed (NautilusWindow *self)
+{
+    g_autoptr (GList) starred_files = NULL;
+    NautilusWindowPrivate *priv;
+
+    priv = nautilus_window_get_instance_private (self);
+
+    starred_files = nautilus_tag_manager_get_starred_files (priv->starred_manager);
+    gtk_places_sidebar_set_show_starred_location (GTK_PLACES_SIDEBAR (priv->places_sidebar),
+                                                  starred_files != NULL);
+}
+
+static void
 nautilus_window_set_up_sidebar (NautilusWindow *window)
 {
     NautilusWindowPrivate *priv;
@@ -1536,6 +1542,12 @@ nautilus_window_set_up_sidebar (NautilusWindow *window)
                       G_CALLBACK (places_sidebar_populate_popup_cb), window);
     g_signal_connect (priv->places_sidebar, "unmount",
                       G_CALLBACK (places_sidebar_unmount_operation_cb), window);
+
+
+    priv->starred_manager = nautilus_tag_manager_get ();
+    g_signal_connect_swapped (priv->starred_manager, "starred-changed",
+                              G_CALLBACK (on_starred_changed), window);
+    on_starred_changed (window);
 }
 
 void
@@ -1558,11 +1570,6 @@ nautilus_window_show_sidebar (NautilusWindow *window)
     DEBUG ("Called show_sidebar()");
 
     priv = nautilus_window_get_instance_private (window);
-
-    if (priv->disable_chrome)
-    {
-        return;
-    }
 
     gtk_widget_show (priv->sidebar);
     setup_side_pane_width (window);
@@ -1715,17 +1722,17 @@ remove_notifications (NautilusWindow *window)
 
     priv = nautilus_window_get_instance_private (window);
     /* Hide it inmediatily so we can animate the new notification. */
-    transition_type = gtk_revealer_get_transition_type (GTK_REVEALER (priv->notification_delete));
-    gtk_revealer_set_transition_type (GTK_REVEALER (priv->notification_delete),
+    transition_type = gtk_revealer_get_transition_type (GTK_REVEALER (priv->in_app_notification_undo));
+    gtk_revealer_set_transition_type (GTK_REVEALER (priv->in_app_notification_undo),
                                       GTK_REVEALER_TRANSITION_TYPE_NONE);
-    gtk_revealer_set_reveal_child (GTK_REVEALER (priv->notification_delete),
+    gtk_revealer_set_reveal_child (GTK_REVEALER (priv->in_app_notification_undo),
                                    FALSE);
-    gtk_revealer_set_transition_type (GTK_REVEALER (priv->notification_delete),
+    gtk_revealer_set_transition_type (GTK_REVEALER (priv->in_app_notification_undo),
                                       transition_type);
-    if (priv->notification_delete_timeout_id != 0)
+    if (priv->in_app_notification_undo_timeout_id != 0)
     {
-        g_source_remove (priv->notification_delete_timeout_id);
-        priv->notification_delete_timeout_id = 0;
+        g_source_remove (priv->in_app_notification_undo_timeout_id);
+        priv->in_app_notification_undo_timeout_id = 0;
     }
 
     transition_type = gtk_revealer_get_transition_type (GTK_REVEALER (priv->notification_operation));
@@ -1743,53 +1750,54 @@ remove_notifications (NautilusWindow *window)
 }
 
 static void
-hide_notification_delete (NautilusWindow *window)
+hide_in_app_notification_undo (NautilusWindow *window)
 {
     NautilusWindowPrivate *priv;
 
     priv = nautilus_window_get_instance_private (window);
 
-    if (priv->notification_delete_timeout_id != 0)
+    if (priv->in_app_notification_undo_timeout_id != 0)
     {
-        g_source_remove (priv->notification_delete_timeout_id);
-        priv->notification_delete_timeout_id = 0;
+        g_source_remove (priv->in_app_notification_undo_timeout_id);
+        priv->in_app_notification_undo_timeout_id = 0;
     }
 
-    gtk_revealer_set_reveal_child (GTK_REVEALER (priv->notification_delete), FALSE);
+    gtk_revealer_set_reveal_child (GTK_REVEALER (priv->in_app_notification_undo), FALSE);
 }
 
 static void
-nautilus_window_on_notification_delete_undo_clicked (GtkWidget      *notification,
-                                                     NautilusWindow *window)
+on_in_app_notification_undo_undo_button_clicked (GtkWidget      *notification,
+                                                 NautilusWindow *window)
 {
-    hide_notification_delete (window);
+    hide_in_app_notification_undo (window);
 
     nautilus_file_undo_manager_undo (GTK_WINDOW (window));
 }
 
 static void
-nautilus_window_on_notification_delete_close_clicked (GtkWidget      *notification,
-                                                      NautilusWindow *window)
+on_in_app_notification_undo_close_button_clicked (GtkWidget      *notification,
+                                                  NautilusWindow *window)
 {
-    hide_notification_delete (window);
+    hide_in_app_notification_undo (window);
 }
 
 static gboolean
-nautilus_window_on_notification_delete_timeout (NautilusWindow *window)
+on_in_app_notification_undo_timeout (NautilusWindow *window)
 {
-    hide_notification_delete (window);
+    hide_in_app_notification_undo (window);
 
-    return FALSE;
+    return G_SOURCE_REMOVE;
 }
 
-static char *
-nautilus_window_notification_delete_get_label (NautilusFileUndoInfo *undo_info,
-                                               GList                *files)
+static gchar *
+in_app_notification_undo_deleted_get_label (NautilusFileUndoInfo *undo_info)
 {
+    GList *files;
     gchar *file_label;
     gchar *label;
     gint length;
 
+    files = nautilus_file_undo_info_trash_get_files (NAUTILUS_FILE_UNDO_INFO_TRASH (undo_info));
     length = g_list_length (files);
     if (length == 1)
     {
@@ -1808,6 +1816,33 @@ nautilus_window_notification_delete_get_label (NautilusFileUndoInfo *undo_info,
     return label;
 }
 
+static gchar *
+in_app_notification_undo_unstar_get_label (NautilusFileUndoInfo *undo_info)
+{
+    GList *files;
+    gchar *label;
+    gint length;
+
+    files = nautilus_file_undo_info_starred_get_files (NAUTILUS_FILE_UNDO_INFO_STARRED (undo_info));
+    length = g_list_length (files);
+    if (length == 1)
+    {
+        g_autofree gchar *file_label = NULL;
+
+        file_label = nautilus_file_get_display_name (files->data);
+        /* Translators: one item has been unstarred and %s is its name. */
+        label = g_markup_printf_escaped (_("“%s” unstarred"), file_label);
+    }
+    else
+    {
+        /* Translators: one or more items have been unstarred, and %d
+         * is the count. */
+        label = g_markup_printf_escaped (ngettext ("%d file unstarred", "%d files unstarred", length), length);
+    }
+
+    return label;
+}
+
 static void
 nautilus_window_on_undo_changed (NautilusFileUndoManager *manager,
                                  NautilusWindow          *window)
@@ -1815,38 +1850,66 @@ nautilus_window_on_undo_changed (NautilusFileUndoManager *manager,
     NautilusWindowPrivate *priv;
     NautilusFileUndoInfo *undo_info;
     NautilusFileUndoManagerState state;
-    gchar *label;
-    GList *files;
 
     priv = nautilus_window_get_instance_private (window);
     undo_info = nautilus_file_undo_manager_get_action ();
     state = nautilus_file_undo_manager_get_state ();
 
     if (undo_info != NULL &&
-        state == NAUTILUS_FILE_UNDO_MANAGER_STATE_UNDO &&
-        nautilus_file_undo_info_get_op_type (undo_info) == NAUTILUS_FILE_UNDO_OP_MOVE_TO_TRASH &&
-        !priv->disable_chrome)
+        state == NAUTILUS_FILE_UNDO_MANAGER_STATE_UNDO)
     {
-        files = nautilus_file_undo_info_trash_get_files (NAUTILUS_FILE_UNDO_INFO_TRASH (undo_info));
+        gboolean popup_notification = FALSE;
+        g_autofree gchar *label = NULL;
 
-        /* Don't pop up a notification if user canceled the operation or the focus
-         * is not in the this window. This is an easy way to know from which window
-         * was the delete operation made */
-        if (g_list_length (files) > 0 && gtk_window_has_toplevel_focus (GTK_WINDOW (window)))
+        if (nautilus_file_undo_info_get_op_type (undo_info) == NAUTILUS_FILE_UNDO_OP_MOVE_TO_TRASH)
         {
-            label = nautilus_window_notification_delete_get_label (undo_info, files);
-            gtk_label_set_markup (GTK_LABEL (priv->notification_delete_label), label);
-            gtk_revealer_set_reveal_child (GTK_REVEALER (priv->notification_delete), TRUE);
-            priv->notification_delete_timeout_id = g_timeout_add_seconds (NOTIFICATION_TIMEOUT,
-                                                                                  (GSourceFunc) nautilus_window_on_notification_delete_timeout,
-                                                                                  window);
-            g_free (label);
+            g_autoptr (GList) files = NULL;
+
+            files = nautilus_file_undo_info_trash_get_files (NAUTILUS_FILE_UNDO_INFO_TRASH (undo_info));
+
+            /* Don't pop up a notification if user canceled the operation or the focus
+             * is not in the this window. This is an easy way to know from which window
+             * was the delete operation made */
+            if (files != NULL && gtk_window_has_toplevel_focus (GTK_WINDOW (window)))
+            {
+                popup_notification = TRUE;
+                label = in_app_notification_undo_deleted_get_label (undo_info);
+            }
         }
-        g_list_free (files);
+        else if (nautilus_file_undo_info_get_op_type (undo_info) == NAUTILUS_FILE_UNDO_OP_STARRED)
+        {
+            NautilusWindowSlot *active_slot;
+            GFile *location;
+
+            active_slot = nautilus_window_get_active_slot (window);
+            location = nautilus_window_slot_get_location (active_slot);
+            /* Don't pop up a notification if the focus is not in the this
+             * window. This is an easy way to know from which window was the
+             * unstart operation made */
+            if (eel_uri_is_starred (g_file_get_uri (location)) &&
+                gtk_window_has_toplevel_focus (GTK_WINDOW (window)) &&
+                !nautilus_file_undo_info_starred_is_starred (NAUTILUS_FILE_UNDO_INFO_STARRED (undo_info)))
+            {
+                popup_notification = TRUE;
+                label = in_app_notification_undo_unstar_get_label (undo_info);
+            }
+        }
+
+        if (popup_notification)
+        {
+            remove_notifications (window);
+            gtk_label_set_markup (GTK_LABEL (priv->in_app_notification_undo_label),
+                                  label);
+            gtk_revealer_set_reveal_child (GTK_REVEALER (priv->in_app_notification_undo),
+                                           TRUE);
+            priv->in_app_notification_undo_timeout_id = g_timeout_add_seconds (NOTIFICATION_TIMEOUT,
+                                                                               (GSourceFunc) on_in_app_notification_undo_timeout,
+                                                                               window);
+        }
     }
     else
     {
-        hide_notification_delete (window);
+        hide_in_app_notification_undo (window);
     }
 }
 
@@ -1908,8 +1971,7 @@ nautilus_window_show_operation_notification (NautilusWindow *window,
 
     priv = nautilus_window_get_instance_private (window);
     current_location = nautilus_window_slot_get_location (priv->active_slot);
-    if (gtk_window_has_toplevel_focus (GTK_WINDOW (window)) &&
-        !priv->disable_chrome)
+    if (gtk_window_has_toplevel_focus (GTK_WINDOW (window)))
     {
         remove_notifications (window);
         gtk_label_set_text (GTK_LABEL (priv->notification_operation_label),
@@ -1935,8 +1997,8 @@ nautilus_window_show_operation_notification (NautilusWindow *window,
 
         gtk_revealer_set_reveal_child (GTK_REVEALER (priv->notification_operation), TRUE);
         priv->notification_operation_timeout_id = g_timeout_add_seconds (NOTIFICATION_TIMEOUT,
-                                                                                 (GSourceFunc) on_notification_operation_timeout,
-                                                                                 window);
+                                                                         (GSourceFunc) on_notification_operation_timeout,
+                                                                         window);
     }
 }
 
@@ -2050,7 +2112,7 @@ notebook_popup_menu_show (NautilusWindow *window,
     gtk_widget_show_all (popup);
 
     gtk_menu_popup_at_pointer (GTK_MENU (popup),
-                               (GdkEvent*) event);
+                               (GdkEvent *) event);
 }
 
 /* emitted when the user clicks the "close" button of tabs */
@@ -2069,7 +2131,7 @@ notebook_button_press_cb (GtkWidget      *widget,
 {
     NautilusWindow *window = user_data;
 
-    if (GDK_BUTTON_PRESS == event->type && 3 == event->button)
+    if (GDK_BUTTON_PRESS == event->type && event->button == GDK_BUTTON_SECONDARY)
     {
         notebook_popup_menu_show (window, event);
         return TRUE;
@@ -2107,9 +2169,6 @@ setup_toolbar (NautilusWindow *window)
     priv = nautilus_window_get_instance_private (window);
 
     g_object_set (priv->toolbar, "window", window, NULL);
-    g_object_bind_property (window, "disable-chrome",
-                            priv->toolbar, "visible",
-                            G_BINDING_INVERT_BOOLEAN);
 
     /* connect to the pathbar signals */
     path_bar = nautilus_toolbar_get_path_bar (NAUTILUS_TOOLBAR (priv->toolbar));
@@ -2393,56 +2452,6 @@ nautilus_window_constructed (GObject *self)
     nautilus_profile_end (NULL);
 }
 
-static void
-nautilus_window_set_property (GObject      *object,
-                              guint         arg_id,
-                              const GValue *value,
-                              GParamSpec   *pspec)
-{
-    NautilusWindow *window;
-    window = NAUTILUS_WINDOW (object);
-    NautilusWindowPrivate *priv;
-
-    priv = nautilus_window_get_instance_private (window);
-
-    switch (arg_id)
-    {
-        case PROP_DISABLE_CHROME:
-        {
-            priv->disable_chrome = g_value_get_boolean (value);
-        }
-        break;
-
-        default:
-        {
-            G_OBJECT_WARN_INVALID_PROPERTY_ID (object, arg_id, pspec);
-        }
-        break;
-    }
-}
-
-static void
-nautilus_window_get_property (GObject    *object,
-                              guint       arg_id,
-                              GValue     *value,
-                              GParamSpec *pspec)
-{
-    NautilusWindow *window;
-    window = NAUTILUS_WINDOW (object);
-    NautilusWindowPrivate *priv;
-
-    priv = nautilus_window_get_instance_private (window);
-
-    switch (arg_id)
-    {
-        case PROP_DISABLE_CHROME:
-        {
-            g_value_set_boolean (value, priv->disable_chrome);
-        }
-        break;
-    }
-}
-
 static gint
 sort_slots_active_last (NautilusWindowSlot *a,
                         NautilusWindowSlot *b,
@@ -2541,10 +2550,10 @@ nautilus_window_finalize (GObject *object)
         priv->sidebar_width_handler_id = 0;
     }
 
-    if (priv->notification_delete_timeout_id != 0)
+    if (priv->in_app_notification_undo_timeout_id != 0)
     {
-        g_source_remove (priv->notification_delete_timeout_id);
-        priv->notification_delete_timeout_id = 0;
+        g_source_remove (priv->in_app_notification_undo_timeout_id);
+        priv->in_app_notification_undo_timeout_id = 0;
     }
 
     if (priv->notification_operation_timeout_id != 0)
@@ -2568,30 +2577,37 @@ nautilus_window_finalize (GObject *object)
     /* nautilus_window_close() should have run */
     g_assert (priv->slots == NULL);
 
+    g_signal_handlers_disconnect_by_data (priv->starred_manager, window);
+    g_clear_object (&priv->starred_manager);
+
     G_OBJECT_CLASS (nautilus_window_parent_class)->finalize (object);
 }
 
 static void
 nautilus_window_save_geometry (NautilusWindow *window)
 {
-    char *geometry_string;
     gboolean is_maximized;
 
     g_assert (NAUTILUS_IS_WINDOW (window));
 
     if (gtk_widget_get_window (GTK_WIDGET (window)))
     {
-        geometry_string = eel_gtk_window_get_geometry_string (GTK_WINDOW (window));
+        gint width;
+        gint height;
+        GVariant *initial_size;
+
+        gtk_window_get_size (GTK_WINDOW (window), &width, &height);
+
+        initial_size = g_variant_new_parsed ("(%i, %i)", width, height);
         is_maximized = gdk_window_get_state (gtk_widget_get_window (GTK_WIDGET (window)))
                        & GDK_WINDOW_STATE_MAXIMIZED;
 
         if (!is_maximized)
         {
-            g_settings_set_string
-                (nautilus_window_state, NAUTILUS_WINDOW_STATE_GEOMETRY,
-                geometry_string);
+            g_settings_set_value (nautilus_window_state,
+                                  NAUTILUS_WINDOW_STATE_INITIAL_SIZE,
+                                  initial_size);
         }
-        g_free (geometry_string);
 
         g_settings_set_boolean
             (nautilus_window_state, NAUTILUS_WINDOW_STATE_MAXIMIZED,
@@ -2880,10 +2896,10 @@ nautilus_window_init (NautilusWindow *window)
     g_type_ensure (NAUTILUS_TYPE_NOTEBOOK);
     gtk_widget_init_template (GTK_WIDGET (window));
 
-    g_signal_connect_object (priv->notification_delete_close, "clicked",
-                             G_CALLBACK (nautilus_window_on_notification_delete_close_clicked), window, 0);
-    g_signal_connect_object (priv->notification_delete_undo, "clicked",
-                             G_CALLBACK (nautilus_window_on_notification_delete_undo_clicked), window, 0);
+    g_signal_connect_object (priv->in_app_notification_undo_close_button, "clicked",
+                             G_CALLBACK (on_in_app_notification_undo_close_button_clicked), window, 0);
+    g_signal_connect_object (priv->in_app_notification_undo_undo_button, "clicked",
+                             G_CALLBACK (on_in_app_notification_undo_undo_button_clicked), window, 0);
 
     priv->slots = NULL;
     priv->active_slot = NULL;
@@ -2895,7 +2911,7 @@ nautilus_window_init (NautilusWindow *window)
     gtk_window_group_add_window (window_group, GTK_WINDOW (window));
     g_object_unref (window_group);
 
-    priv->tab_data_queue = g_queue_new();
+    priv->tab_data_queue = g_queue_new ();
 
     priv->pad_controller = gtk_pad_controller_new (GTK_WINDOW (window),
                                                    G_ACTION_GROUP (window),
@@ -2910,6 +2926,7 @@ real_window_close (NautilusWindow *window)
     g_return_if_fail (NAUTILUS_IS_WINDOW (window));
 
     nautilus_window_save_geometry (window);
+    nautilus_window_set_active_slot (window, NULL);
 
     gtk_widget_destroy (GTK_WIDGET (window));
 }
@@ -2922,8 +2939,6 @@ nautilus_window_class_init (NautilusWindowClass *class)
 
     oclass->finalize = nautilus_window_finalize;
     oclass->constructed = nautilus_window_constructed;
-    oclass->get_property = nautilus_window_get_property;
-    oclass->set_property = nautilus_window_set_property;
 
     wclass->destroy = nautilus_window_destroy;
     wclass->show = nautilus_window_show;
@@ -2945,10 +2960,10 @@ nautilus_window_class_init (NautilusWindowClass *class)
     gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, places_sidebar);
     gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, main_view);
     gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notebook);
-    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notification_delete);
-    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notification_delete_label);
-    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notification_delete_undo);
-    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notification_delete_close);
+    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, in_app_notification_undo);
+    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, in_app_notification_undo_label);
+    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, in_app_notification_undo_undo_button);
+    gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, in_app_notification_undo_close_button);
     gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notification_operation);
     gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notification_operation_label);
     gtk_widget_class_bind_template_child_private (wclass, NautilusWindow, notification_operation_open);
@@ -2957,13 +2972,6 @@ nautilus_window_class_init (NautilusWindowClass *class)
     gtk_widget_class_bind_template_callback (wclass, places_sidebar_show_other_locations_with_flags);
     gtk_widget_class_bind_template_callback (wclass, places_sidebar_show_starred_location);
 
-    properties[PROP_DISABLE_CHROME] =
-        g_param_spec_boolean ("disable-chrome",
-                              "Disable chrome",
-                              "Disable window chrome, for the desktop",
-                              FALSE,
-                              G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
-                              G_PARAM_STATIC_STRINGS);
     signals[SLOT_ADDED] =
         g_signal_new ("slot-added",
                       G_TYPE_FROM_CLASS (class),
@@ -2998,14 +3006,13 @@ nautilus_window_class_init (NautilusWindowClass *class)
 
     gtk_widget_class_bind_template_callback (wclass, on_notification_operation_open_clicked);
     gtk_widget_class_bind_template_callback (wclass, on_notification_operation_close_clicked);
-
-    g_object_class_install_properties (oclass, NUM_PROPERTIES, properties);
 }
 
 NautilusWindow *
 nautilus_window_new (GdkScreen *screen)
 {
     return g_object_new (NAUTILUS_TYPE_WINDOW,
+                         "icon-name", APPLICATION_ID,
                          "screen", screen,
                          NULL);
 }
@@ -3024,7 +3031,7 @@ nautilus_event_get_window_open_flags (void)
     }
 
     if ((event->type == GDK_BUTTON_PRESS || event->type == GDK_BUTTON_RELEASE) &&
-        (event->button.button == 2))
+        (event->button.button == GDK_BUTTON_MIDDLE))
     {
         flags |= NAUTILUS_WINDOW_OPEN_FLAG_NEW_TAB;
     }
@@ -3090,12 +3097,19 @@ nautilus_window_show_about_dialog (NautilusWindow *window)
         "Sun Microsystems",
         NULL
     };
+    g_autofree gchar *program_name = NULL;
+
+    /* “Files” is the generic application name and the suffix is
+     * an arbitrary and deliberately unlocalized string only shown
+     * in development builds.
+     */
+    program_name = g_strconcat (_("Files"), NAME_SUFFIX, NULL);
 
     gtk_show_about_dialog (window ? GTK_WINDOW (window) : NULL,
-                           "program-name", _("Files"),
+                           "program-name", program_name,
                            "version", VERSION,
-                           "comments", _("Access and organize your files."),
-                           "copyright", "Copyright © 1999–2016 The Files Authors",
+                           "comments", _("Access and organize your files"),
+                           "copyright", "© 1999–2018 The Files Authors",
                            "license-type", GTK_LICENSE_GPL_3_0,
                            "artists", artists,
                            "authors", authors,
@@ -3105,7 +3119,7 @@ nautilus_window_show_about_dialog (NautilusWindow *window)
                             * box to give credit to the translator(s).
                             */
                            "translator-credits", _("translator-credits"),
-                           "logo-icon-name", "org.gnome.Nautilus",
+                           "logo-icon-name", APPLICATION_ID,
                            NULL);
 }
 

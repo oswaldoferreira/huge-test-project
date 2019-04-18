@@ -80,13 +80,15 @@
             ]
         },
         {
+
             "buildsystem": "meson",
             "builddir": true,
-            "name": "nautilus",
+
+            "name": "autilus",
             "config-opts": [
-                "-Denable-desktop=false",
-                "-Denable-selinux=false",
-                "--libdir=/app/lib"
+                "--libdir=/app/lib",
+                        
+                "-Dprofile=development"
             ],
             "sources": [
                 {
