@@ -1,4 +1,25 @@
-            "name": "exiv2",
+{
+    "app-id": "org.gnome.Nautilus",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "master",
+    "sdk": "org.gnome.Sdk",
+    "command": "nautilus",
+    "tags": ["devel", "development", "nightly"],
+    "desktop-file-name-prefix": "(Development) ",
+    "finish-args": [
+        "--share=ipc", "--socket=x11",
+        "--socket=wayland",
+        "--talk-name=org.gnome.OnlineAccounts",
+        "--talk-name=org.freedesktop.Tracker1",
+        "--filesystem=home",
+        "--talk-name=org.gtk.vfs", "--talk-name=org.gtk.vfs.*",
+        "--filesystem=xdg-run/dconf", "--filesystem=~/.config/dconf:ro",
+        "--talk-name=ca.desrt.dconf", "--env=DCONF_USER_CONFIG_DIR=.config/dconf"
+    ],
+    "cleanup": [ "/include", "/share/bash-completion" ],
+    "modules": [
+        {
+            "name": "exiv3",
             "sources": [
                 {
                     "type": "archive",
@@ -77,4 +98,64 @@
             ]
         }
     ]
+},
+{
+    "app-id": "foo",
+    "runtime": "foo",
+    "runtime-version": "foo",
+    "sdk": "foo",
+    "command": "foo",
+    "tags": ["foo", "bar", "kux"],
+    "desktop-file-name-prefix": "(Foo) ",
+    {
+      "buildsystem": "meson",
+      "builddir": true,
+      "name": "nautilus",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://gitlab.gnome.org/GNOME/nautilus.git"
+        }
+      ]
+    }
+},
+{
+    "app-id": "foo",
+    "runtime": "foo",
+    "runtime-version": "foo",
+    "sdk": "foo",
+    "command": "foo",
+    "tags": ["foo", "bar", "kux"],
+    "desktop-file-name-prefix": "(Foo) ",
+    {
+      "buildsystem": "meson",
+      "builddir": true,
+      "name": "nautilus",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://gitlab.gnome.org/GNOME/nautilus.git"
+        }
+      ]
+    }
+},
+{
+    "app-id": "foo",
+    "runtime": "foo",
+    "runtime-version": "foo",
+    "sdk": "foo",
+    "command": "foo",
+    "tags": ["foo", "bar", "kux"],
+    "desktop-file-name-prefix": "(Foo) ",
+    {
+      "buildsystem": "meson",
+      "builddir": true,
+      "name": "nautilus",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://gitlab.gnome.org/GNOME/nautilus.git"
+        }
+      ]
+    }
 }
